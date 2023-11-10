@@ -64,6 +64,7 @@ class EmbeddingManager(nn.Module):
             get_embedding_for_tkn = embedder.transformer.token_emb
             token_dim = 1280
 
+        # to identify each image uniquely with unique token for each image
         if per_image_tokens:
             placeholder_strings.extend(per_img_token_list)
 
@@ -76,7 +77,7 @@ class EmbeddingManager(nn.Module):
 
                 with torch.no_grad():
                     init_word_embedding = get_embedding_for_tkn(init_word_token.cpu())
-
+                # token_params are embeddings
                 token_params = torch.nn.Parameter(init_word_embedding.unsqueeze(0).repeat(num_vectors_per_token, 1), requires_grad=True)
                 self.initial_embeddings[placeholder_string] = torch.nn.Parameter(init_word_embedding.unsqueeze(0).repeat(num_vectors_per_token, 1), requires_grad=False)
             else:

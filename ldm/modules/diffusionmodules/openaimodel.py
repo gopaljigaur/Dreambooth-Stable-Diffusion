@@ -524,6 +524,8 @@ class UNetModel(nn.Module):
         input_block_chans = [model_channels]
         ch = model_channels
         ds = 1
+
+        # attention blocks
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
                 layers = [

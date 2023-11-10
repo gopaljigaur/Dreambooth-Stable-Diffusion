@@ -7,10 +7,12 @@ from torchvision import transforms
 
 import random
 
+# conditioning template for training image with unique token
 training_templates_smallest = [
-    'photo of a sks {}',
+    'photo of a t@y {}',
 ]
 
+# conditioning template for regularization images without token
 reg_templates_smallest = [
     'photo of a {}',
 ]
@@ -192,8 +194,9 @@ class PersonalizedBase(Dataset):
 
         placeholder_string = self.placeholder_token
         if self.coarse_class_text:
-            placeholder_string = f"{self.coarse_class_text} {placeholder_string}"
+            placeholder_string = f"{self.coarse_class_text} {placeholder_string}" # added classname to placeholder
 
+        # choosing caption from the templates based on train or reg
         if not self.reg:
             text = random.choice(training_templates_smallest).format(placeholder_string)
         else:
@@ -203,7 +206,8 @@ class PersonalizedBase(Dataset):
 
         # default to score-sde preprocessing
         img = np.array(image).astype(np.uint8)
-        
+
+        # data augmentation
         if self.center_crop:
             crop = min(img.shape[0], img.shape[1])
             h, w, = img.shape[0], img.shape[1]

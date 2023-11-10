@@ -628,7 +628,7 @@ if __name__ == "__main__":
         # config.model.params.personalization_config.params.placeholder_tokens = opt.placeholder_tokens
 
         # if opt.init_word:
-        #     config.model.params.personalization_config.params.initializer_words[0] = opt.init_word
+        #     config.model.params.personalization_config.params.initializer_words[0] = opt.init_wordC
             
         config.data.params.train.params.placeholder_token = opt.class_word
         config.data.params.reg.params.placeholder_token = opt.class_word

@@ -90,6 +90,7 @@ class DDPM(pl.LightningModule):
         self.use_positional_encodings = use_positional_encodings
         self.model = DiffusionWrapper(unet_config, conditioning_key)
         count_params(self.model, verbose=True)
+        # EMA - Exponential Moving Average
         self.use_ema = use_ema
         if self.use_ema:
             self.model_ema = LitEma(self.model)
@@ -100,6 +101,8 @@ class DDPM(pl.LightningModule):
             self.scheduler_config = scheduler_config
 
         self.v_posterior = v_posterior
+
+        # TODO: ASK: why is elbo used for diffusion? isn't it generally used for VAEs?
         self.original_elbo_weight = original_elbo_weight
         self.l_simple_weight = l_simple_weight
         self.embedding_reg_weight = embedding_reg_weight
@@ -111,7 +114,7 @@ class DDPM(pl.LightningModule):
             self.monitor = monitor
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys, only_model=load_only_unet)
-
+        # schedule for added noise during diffusion. noise variance values -> beta(t), t - timestep
         self.register_schedule(given_betas=given_betas, beta_schedule=beta_schedule, timesteps=timesteps,
                                linear_start=linear_start, linear_end=linear_end, cosine_s=cosine_s)
 
@@ -431,7 +434,7 @@ class DDPM(pl.LightningModule):
 
 
 class LatentDiffusion(DDPM):
-    """main class"""
+    """main class. wrapper for DDPM. adds conditioning capabilities to ddpm"""
     def __init__(self,
                  first_stage_config,
                  cond_stage_config,
@@ -459,7 +462,7 @@ class LatentDiffusion(DDPM):
             conditioning_key = None
         ckpt_path = kwargs.pop("ckpt_path", None)
         ignore_keys = kwargs.pop("ignore_keys", [])
-        super().__init__(conditioning_key=conditioning_key, *args, **kwargs)
+        super().__init__(conditioning_key=conditioning_key, *args, **kwargs) # *args, **kwargs go to DDPM
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key
@@ -905,10 +908,13 @@ class LatentDiffusion(DDPM):
 
     def shared_step(self, batch, **kwargs):
         x, c = self.get_input(batch, self.first_stage_key)
-        loss = self(x, c)
+        loss = self(x, c) # forward pass
         return loss
     
     def training_step(self, batch, batch_idx):
+        # #######################
+        # Loss between training and regularization batchs - prior preservation loss?##
+        ##########################
         train_batch = batch[0]
         reg_batch = batch[1]
         
@@ -930,6 +936,7 @@ class LatentDiffusion(DDPM):
         return loss
 
     def forward(self, x, c, *args, **kwargs):
+        # defines the forward pass of the model, which computes the loss for the input x and condition c at random timesteps t.
         t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
         if self.model.conditioning_key is not None:
             assert c is not None
@@ -952,7 +959,7 @@ class LatentDiffusion(DDPM):
         return [rescale_bbox(b) for b in bboxes]
 
     def apply_model(self, x_noisy, t, cond, return_ids=False):
-
+        # Applies the model to noisy input x_noisy with timestep t and condition cond. It supports processing the input in patches and handles different types of conditioning.
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
             pass
@@ -1073,6 +1080,7 @@ class LatentDiffusion(DDPM):
         return mean_flat(kl_prior) / np.log(2.0)
 
     def p_losses(self, x_start, cond, t, noise=None):
+        # Calculates the loss for the model predictions (Diffusion loss)
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_output = self.apply_model(x_noisy, t, cond)
@@ -1117,6 +1125,7 @@ class LatentDiffusion(DDPM):
 
     def p_mean_variance(self, x, c, t, clip_denoised: bool, return_codebook_ids=False, quantize_denoised=False,
                         return_x0=False, score_corrector=None, corrector_kwargs=None):
+        # Computes the mean and variance of the model's predictions, which are used in the sampling process.
         t_in = t
         model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
 
@@ -1150,6 +1159,7 @@ class LatentDiffusion(DDPM):
     def p_sample(self, x, c, t, clip_denoised=False, repeat_noise=False,
                  return_codebook_ids=False, quantize_denoised=False, return_x0=False,
                  temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None):
+        # Samples from the model's predictions, optionally applying a score corrector and handling quantization of the denoised images.
         b, *_, device = *x.shape, x.device
         outputs = self.p_mean_variance(x=x, c=c, t=t, clip_denoised=clip_denoised,
                                        return_codebook_ids=return_codebook_ids,
@@ -1196,6 +1206,7 @@ class LatentDiffusion(DDPM):
             img = x_T
         intermediates = []
         if cond is not None:
+            # conditioning
             if isinstance(cond, dict):
                 cond = {key: cond[key][:batch_size] if not isinstance(cond[key], list) else
                 list(map(lambda x: x[:batch_size], cond[key])) for key in cond}
@@ -1337,7 +1348,7 @@ class LatentDiffusion(DDPM):
         log["reconstruction"] = xrec
         if self.model.conditioning_key is not None:
             if hasattr(self.cond_stage_model, "decode"):
-                xc = self.cond_stage_model.decode(c)
+                xc = self.cond_stage_model.decode(c) # deconding latent emb to text
                 log["conditioning"] = xc
             elif self.cond_stage_key in ["caption"]:
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["caption"])
@@ -1519,9 +1530,10 @@ class LatentDiffusion(DDPM):
 
 
 class DiffusionWrapper(pl.LightningModule):
+    """wrapper around UNET architecture creates DDPM"""
     def __init__(self, diff_model_config, conditioning_key):
         super().__init__()
-        self.diffusion_model = instantiate_from_config(diff_model_config)
+        self.diffusion_model = instantiate_from_config(diff_model_config) # instantiating UNET model here (openai)
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
 
